@@ -19,7 +19,9 @@ Haqiqiy botni domensiz mahalliy sinash uchun `BOT_MODE=polling`, `BOT_TOKEN`, `O
 
 ## Contabo / Docker Compose
 
-Domensiz server uchun bot `polling` rejimida ishlaydi. Panelning 8765 porti faqat serverning `127.0.0.1` manzilida ochiladi. `.env` faylini Gitga qo‘shmang.
+Serverda bot `polling` rejimida ishlaydi. Panelning ichki 8765 porti faqat serverning `127.0.0.1` manzilida ochiladi; ommaviy kirish Caddy orqali HTTPS’da beriladi. `.env` faylini Gitga qo‘shmang.
+
+Ommaviy panel uchun `PUBLIC_DOMAIN` DNS orqali serverga yo‘naltiriladi va Caddy 80/443 portlarida HTTPS beradi. `PUBLIC_BASE_URL=https://PUBLIC_DOMAIN`, `DEV_MODE=0` qiling. Vaqtinchalik sinov domeni sifatida `itlive.144-91-125-185.sslip.io` ishlatilishi mumkin; keyin o‘z domeningizga almashtiring. Admin sessiya cookie’si HTTPS talab qiladi. 8765 porti faqat serverning `localhost` manzilida qoladi.
 
 ```bash
 git clone https://github.com/ravshanbekh/itlive23bot.git /opt/itlive23bot
@@ -30,11 +32,12 @@ chmod 700 data
 umask 077
 cat > .env <<'EOF'
 BOT_MODE=polling
-DEV_MODE=1
+DEV_MODE=0
 BOT_TOKEN=BOTFATHER_TOKENINI_SHU_YERGA_KIRITING
 OWNER_TELEGRAM_ID=TELEGRAM_ID
-PUBLIC_BASE_URL=http://127.0.0.1:8765
+PUBLIC_BASE_URL=https://itlive.144-91-125-185.sslip.io
 SESSION_SECRET=KAMIDA_32_BELGILI_TASODIFIY_QIYMAT
+PUBLIC_DOMAIN=itlive.144-91-125-185.sslip.io
 EOF
 chmod 600 .env
 docker compose up -d --build
@@ -42,7 +45,7 @@ docker compose ps
 curl -fsS http://127.0.0.1:8765/health
 ```
 
-Panelga kirish uchun kompyuteringizda `ssh -L 8765:127.0.0.1:8765 root@SERVER_IP` tunnelini oching. So‘ng botga `/admin` yuboring va kelgan lokal havolani shu kompyuterda oching. Serverning 8765 portini Internetga ochmang. Botga `restarting` holati tushsa `docker compose logs --tail 100 app` bilan tekshiring. Serverdagi `data/` papkasi SQLite bazasini saqlaydi; zaxira uchun `python -m itlive.backup` yoki hostdagi SQLite online backup usulidan foydalaning.
+Panelga kirish uchun botga `/admin` yuboring va kelgan HTTPS havolani oching. Serverning 8765 portini Internetga ochmang. Botga `restarting` holati tushsa `docker compose logs --tail 100 app` bilan tekshiring. Serverdagi `data/` papkasi SQLite bazasini saqlaydi; zaxira uchun `python -m itlive.backup` yoki hostdagi SQLite online backup usulidan foydalaning.
 
 Kundalik lokal zaxirani yoqish:
 
