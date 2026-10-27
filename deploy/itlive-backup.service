@@ -1,0 +1,7 @@
+[Unit]
+Description=ITLIVE SQLite online backup
+RequiresMountsFor=/opt/itlive23bot/data
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /opt/itlive23bot/deploy/backup.sh

@@ -44,6 +44,20 @@ curl -fsS http://127.0.0.1:8765/health
 
 Panelga kirish uchun kompyuteringizda `ssh -L 8765:127.0.0.1:8765 root@SERVER_IP` tunnelini oching. So‘ng botga `/admin` yuboring va kelgan lokal havolani shu kompyuterda oching. Serverning 8765 portini Internetga ochmang. Botga `restarting` holati tushsa `docker compose logs --tail 100 app` bilan tekshiring. Serverdagi `data/` papkasi SQLite bazasini saqlaydi; zaxira uchun `python -m itlive.backup` yoki hostdagi SQLite online backup usulidan foydalaning.
 
+Kundalik lokal zaxirani yoqish:
+
+```bash
+install -m 0644 deploy/itlive-backup.service /etc/systemd/system/
+install -m 0644 deploy/itlive-backup.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now itlive-backup.timer
+systemctl start itlive-backup.service
+systemctl status itlive-backup.service --no-pager
+systemctl list-timers itlive-backup.timer
+```
+
+Timer 21:30 UTC atrofida ishlaydi (Toshkentda ertasi kuni 02:30). `backups/` serverning o‘z diskida qoladi; ofsayt nusxa uchun alohida manzil va kirish ma’lumoti kerak. Yangilash: `git pull --ff-only`, `docker compose up -d --build`, so‘ng `/health` va loglarni tekshiring. Bir token bilan ikki joyda polling ishlatmang.
+
 ## Railway
 
 1. Ushbu papkani alohida Git repo sifatida yoki loyiha root sifatida Railway’ga ulang.

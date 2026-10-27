@@ -4,6 +4,7 @@
 *.sqlite3-shm
 *.sqlite3-wal
 data
+backups
 tests
 .pytest_cache
 __pycache__
