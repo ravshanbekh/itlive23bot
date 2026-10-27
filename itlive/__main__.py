@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -114,7 +115,9 @@ async def make_app(config=None):
 def main():
     logging.basicConfig(level=logging.INFO,format="%(levelname)s %(name)s: %(message)s")
     config=Config.from_env()
-    host="127.0.0.1" if config.bot_mode=="polling" else "0.0.0.0"
+    host=os.getenv("BIND_HOST") or ("127.0.0.1" if config.bot_mode=="polling" else "0.0.0.0")
+    if host not in ("127.0.0.1","0.0.0.0"):
+        raise ValueError("BIND_HOST 127.0.0.1 yoki 0.0.0.0 bo‘lishi kerak")
     web.run_app(make_app(config),host=host,port=config.port,access_log=None)
 
 

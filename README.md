@@ -17,6 +17,33 @@ python -m itlive
 
 Haqiqiy botni domensiz mahalliy sinash uchun `BOT_MODE=polling`, `BOT_TOKEN`, `OWNER_TELEGRAM_ID`, `PUBLIC_BASE_URL=http://127.0.0.1:8080` va `SQLITE_PATH=./itlive.sqlite3` kiriting. Bot ishlaydi, panel havolasi faqat shu kompyuterda ochiladi. Bu rejimda webhook o‘chiriladi; Railway’ga o‘tganda `BOT_MODE=webhook` qiling.
 
+## Contabo / Docker Compose
+
+Domensiz server uchun bot `polling` rejimida ishlaydi. Panelning 8765 porti faqat serverning `127.0.0.1` manzilida ochiladi. `.env` faylini Gitga qo‘shmang.
+
+```bash
+git clone https://github.com/ravshanbekh/itlive23bot.git /opt/itlive23bot
+cd /opt/itlive23bot
+mkdir -p data
+chown 10001:10001 data
+chmod 700 data
+umask 077
+cat > .env <<'EOF'
+BOT_MODE=polling
+DEV_MODE=1
+BOT_TOKEN=BOTFATHER_TOKENINI_SHU_YERGA_KIRITING
+OWNER_TELEGRAM_ID=TELEGRAM_ID
+PUBLIC_BASE_URL=http://127.0.0.1:8765
+SESSION_SECRET=KAMIDA_32_BELGILI_TASODIFIY_QIYMAT
+EOF
+chmod 600 .env
+docker compose up -d --build
+docker compose ps
+curl -fsS http://127.0.0.1:8765/health
+```
+
+Panelga kirish uchun kompyuteringizda `ssh -L 8765:127.0.0.1:8765 root@SERVER_IP` tunnelini oching. So‘ng botga `/admin` yuboring va kelgan lokal havolani shu kompyuterda oching. Serverning 8765 portini Internetga ochmang. Botga `restarting` holati tushsa `docker compose logs --tail 100 app` bilan tekshiring. Serverdagi `data/` papkasi SQLite bazasini saqlaydi; zaxira uchun `python -m itlive.backup` yoki hostdagi SQLite online backup usulidan foydalaning.
+
 ## Railway
 
 1. Ushbu papkani alohida Git repo sifatida yoki loyiha root sifatida Railway’ga ulang.
