@@ -63,6 +63,11 @@ class Store:
             CREATE TABLE IF NOT EXISTS processed_updates(update_id INTEGER PRIMARY KEY, received_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS admin_audit(id INTEGER PRIMARY KEY, actor_staff_id INTEGER REFERENCES staff(id), action TEXT NOT NULL, detail TEXT, created_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS login_attempts(ip_hash TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS agent_modes(user_id INTEGER PRIMARY KEY, mode TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS agent_requests(id INTEGER PRIMARY KEY, telegram_id INTEGER NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('report','task')), payload TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, processed_at TEXT);
+            CREATE TABLE IF NOT EXISTS agent_replies(request_id INTEGER PRIMARY KEY REFERENCES agent_requests(id), queued_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS agent_report_slots(slot TEXT PRIMARY KEY, queued_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS agent_alerts(alert_key TEXT PRIMARY KEY, queued_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS leads_status ON leads(status);
             CREATE INDEX IF NOT EXISTS leads_assignee ON leads(assignee_id);
             CREATE INDEX IF NOT EXISTS leads_created ON leads(created_at);
@@ -70,6 +75,7 @@ class Store:
             CREATE INDEX IF NOT EXISTS leads_phone ON leads(phone_e164);
             CREATE INDEX IF NOT EXISTS outbox_due ON notification_outbox(sent_at,next_attempt_at);
             CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent_at,cancelled_at,due_at);
+            CREATE INDEX IF NOT EXISTS agent_requests_pending ON agent_requests(processed_at,id);
             """)
             db.execute("INSERT OR IGNORE INTO schema_migrations VALUES(1)")
             columns={row["name"] for row in db.execute("PRAGMA table_info(leads)")}

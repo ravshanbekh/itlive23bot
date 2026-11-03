@@ -70,7 +70,17 @@ def create_router(store: Store, base_url: str):
             [InlineKeyboardButton(text=MENU[i],callback_data=key) for i,key in pair]
             for pair in [((0,"courses"),(1,"mentors")),((2,"branches"),(3,"apply")),((4,"callback"),(5,"faq")),((6,"contact"),(7,"mine"))]
         ])
+        if store.one("SELECT 1 FROM staff WHERE telegram_id=? AND role='owner' AND active=1",(target.from_user.id,)):
+            markup.inline_keyboard.append([InlineKeyboardButton(text="🤖 AI nazorat",callback_data="agent:menu")])
         await send(target,"Assalomu alaykum! ITLIVE qabul botiga xush kelibsiz. Kerakli bo‘limni tanlang.",markup)
+
+    def owner_allowed(target):
+        chat=target.message.chat if isinstance(target,CallbackQuery) else target.chat
+        return chat.type=="private" and bool(store.one("SELECT 1 FROM staff WHERE telegram_id=? AND role='owner' AND active=1",(target.from_user.id,)))
+
+    def queue_agent(target,kind,payload=""):
+        with store.connection() as db:
+            db.execute("INSERT INTO agent_requests(telegram_id,kind,payload,created_at) VALUES(?,?,?,?)",(target.from_user.id,kind,payload,utc_now()))
 
     async def content_list(target, table, title, prefix):
         extra={"courses":"AND TRIM(COALESCE(NULLIF(description,''),short_description))<>''","mentors":"AND TRIM(bio)<>''","branches":"AND TRIM(address)<>''"}[table]
@@ -168,6 +178,7 @@ def create_router(store: Store, base_url: str):
     async def start(message:Message):
         store.upsert_user(message.from_user)
         store.clear_draft(message.from_user.id)
+        with store.connection() as db: db.execute("DELETE FROM agent_modes WHERE user_id=?",(message.from_user.id,))
         payload=(message.text or "").partition(" ")[2].strip()
         if payload and re.fullmatch(r"[A-Za-z0-9_-]{1,64}",payload):
             campaign=store.one("SELECT code FROM campaigns WHERE code=? AND active=1",(payload,))
@@ -182,9 +193,48 @@ def create_router(store: Store, base_url: str):
             await message.answer("Admin kirishiga ruxsatingiz yo‘q."); return
         await message.answer(f"Panelga bir martalik kirish havolasi (10 daqiqa):\n{issue_login_link(store,staff,base_url)}",link_preview_options={"is_disabled":True})
 
+    @router.message(Command("agent"))
+    async def agent_menu(message:Message):
+        if not owner_allowed(message):
+            await message.answer("Ruxsat yo‘q."); return
+        await send(message,"AI nazorat: hisobot oling yoki sotuvchiga vazifa yuboring.",kb(("📊 Hozirgi holat","agent:report"),("📝 Vazifa berish","agent:task")))
+
+    @router.message(Command("report"))
+    async def agent_report(message:Message):
+        if not owner_allowed(message):
+            await message.answer("Ruxsat yo‘q."); return
+        queue_agent(message,"report")
+        await message.answer("Hozirgi CRM holati tayyorlanmoqda. Hisobot shu chatga keladi.")
+
+    @router.message(Command("task"))
+    async def agent_task(message:Message):
+        if not owner_allowed(message):
+            await message.answer("Ruxsat yo‘q."); return
+        body=(message.text or "").partition(" ")[2].strip()
+        if body:
+            queue_agent(message,"task",body[:800])
+            await message.answer("Vazifa qabul qilindi. Natija shu chatga keladi.")
+        else:
+            with store.connection() as db:
+                db.execute("INSERT INTO agent_modes(user_id,mode,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at",(message.from_user.id,"task",utc_now()))
+            await message.answer("Vazifani yozing. Masalan: Ali | Bugun 15:00 gacha lead #12 ga qo‘ng‘iroq qilsin. Bekor qilish uchun “Bekor qilish” yuboring.")
+
     @router.callback_query()
     async def callbacks(call:CallbackQuery):
         data=call.data or ""
+        if data.startswith("agent:"):
+            if not owner_allowed(call):
+                await call.answer("Ruxsat yo‘q",show_alert=True); return
+            if data=="agent:menu":
+                await send(call,"AI nazorat: hisobot oling yoki sotuvchiga vazifa yuboring.",kb(("📊 Hozirgi holat","agent:report"),("📝 Vazifa berish","agent:task"),("🏠 Bosh menyu","home"))); return
+            if data=="agent:report":
+                queue_agent(call,"report")
+                await send(call,"Hozirgi CRM holati tayyorlanmoqda. Hisobot shu chatga keladi.",kb(("🤖 AI nazorat","agent:menu"))); return
+            if data=="agent:task":
+                with store.connection() as db:
+                    db.execute("INSERT INTO agent_modes(user_id,mode,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at",(call.from_user.id,"task",utc_now()))
+                await send(call,"Vazifani yozing. Masalan: Ali | Bugun 15:00 gacha lead #12 ga qo‘ng‘iroq qilsin. Bekor qilish uchun “Bekor qilish” yuboring."); return
+            await call.answer("Tugma eskirgan",show_alert=True); return
         if data=="home": await home(call); return
         if data=="courses": await content_list(call,"courses","Faol kurslar:","course"); return
         if data=="mentors": await content_list(call,"mentors","Mentorlar:","mentor"); return
@@ -290,7 +340,16 @@ def create_router(store: Store, base_url: str):
     @router.message()
     async def messages(message:Message):
         if message.text=="Bekor qilish":
+            with store.connection() as db: db.execute("DELETE FROM agent_modes WHERE user_id=?",(message.from_user.id,))
             store.clear_draft(message.from_user.id); await home(message); return
+        if owner_allowed(message) and store.one("SELECT 1 FROM agent_modes WHERE user_id=? AND mode='task'",(message.from_user.id,)):
+            body=(message.text or "").strip()
+            if not body or len(body)>800:
+                await message.answer("Vazifa matni 1–800 belgidan iborat bo‘lsin."); return
+            with store.connection() as db:
+                db.execute("INSERT INTO agent_requests(telegram_id,kind,payload,created_at) VALUES(?,'task',?,?)",(message.from_user.id,body,utc_now()))
+                db.execute("DELETE FROM agent_modes WHERE user_id=?",(message.from_user.id,))
+            await message.answer("Vazifa qabul qilindi. Natija shu chatga keladi."); return
         draft=store.get_draft(message.from_user.id)
         if not draft or draft.get("step") not in ("name","phone","preferred","note"):
             await home(message); return

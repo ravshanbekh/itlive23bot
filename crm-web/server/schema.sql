@@ -58,3 +58,27 @@ CREATE TABLE IF NOT EXISTS crm_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS crm_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS crm_tasks (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  assignee_id BIGINT NOT NULL REFERENCES crm_staff(id),
+  created_by BIGINT REFERENCES crm_staff(id),
+  lead_id BIGINT REFERENCES crm_leads(id) ON DELETE SET NULL,
+  due_at TIMESTAMPTZ,
+  status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','done')),
+  source TEXT NOT NULL DEFAULT 'web',
+  source_request_id BIGINT UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS crm_tasks_assignee_status ON crm_tasks(assignee_id,status,due_at);
+CREATE TABLE IF NOT EXISTS crm_task_events (
+  id BIGSERIAL PRIMARY KEY,
+  task_id BIGINT NOT NULL REFERENCES crm_tasks(id) ON DELETE CASCADE,
+  actor_id BIGINT REFERENCES crm_staff(id),
+  kind TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

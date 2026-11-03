@@ -53,3 +53,32 @@ async def test_foreign_contact_rejected(tmp_path,monkeypatch):
     assert store.get_draft(333)["step"]=="phone"
     assert "Faqat o‘z kontaktingizni" in api.await_args.args[0].text
     await bot.session.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_agent_report_and_task_queue(tmp_path,monkeypatch):
+    store=Store(tmp_path/"agent.sqlite3"); store.init(333)
+    bot=Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
+    api=AsyncMock()
+    monkeypatch.setattr(Bot,"__call__",api)
+    dp=Dispatcher(); dp.include_router(create_router(store,"https://example.org"))
+    await dp.feed_update(bot,update_callback(1,"agent:report"))
+    await dp.feed_update(bot,update_callback(2,"agent:task"))
+    await dp.feed_update(bot,update_message(3,"ali | Lead #12 ga qo‘ng‘iroq qiling"))
+    rows=store.all("SELECT telegram_id,kind,payload FROM agent_requests ORDER BY id")
+    assert [(r["telegram_id"],r["kind"]) for r in rows]==[(333,"report"),(333,"task")]
+    assert "Lead #12" in rows[1]["payload"]
+    assert store.one("SELECT 1 FROM agent_modes WHERE user_id=333") is None
+    await bot.session.close()
+
+
+@pytest.mark.asyncio
+async def test_non_owner_cannot_queue_agent_request(tmp_path,monkeypatch):
+    store=Store(tmp_path/"agent-denied.sqlite3"); store.init(111)
+    bot=Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
+    monkeypatch.setattr(Bot,"__call__",AsyncMock())
+    dp=Dispatcher(); dp.include_router(create_router(store,"https://example.org"))
+    await dp.feed_update(bot,update_callback(1,"agent:report"))
+    await dp.feed_update(bot,update_message(2,"/task ali | Xabar"))
+    assert store.one("SELECT 1 FROM agent_requests") is None
+    await bot.session.close()

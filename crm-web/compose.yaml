@@ -28,6 +28,13 @@ services:
       BOT_SQLITE_PATH: /bot-data/itlive.sqlite3
       PORT: "8787"
       TZ: Asia/Tashkent
+      AI_PROVIDER: ${AI_PROVIDER:-auto}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
     volumes:
       - /opt/itlive23bot/data:/bot-data
     networks:

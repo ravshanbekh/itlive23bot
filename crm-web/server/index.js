@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STATUSES, CLOSED, mapLegacyStatus, pickAssignee, validateStage } from './rules.js';
 import { passwordHash, verifyPassword } from './auth.js';
+import { availableProviders, createAgent } from './agent.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
@@ -20,6 +21,7 @@ app.set('trust proxy',1);
 app.use(express.json({ limit: '128kb' }));
 app.use((req, res, next) => { res.set('Cache-Control','no-store'); res.set('X-Content-Type-Options','nosniff'); next(); });
 const q = (text, args=[]) => db.query(text,args);
+const agent = createAgent({db,bot});
 const str = v => String(v ?? '').trim();
 const id = v => { const n=Number(v); if (!Number.isSafeInteger(n) || n<1) throw new Error('Noto‘g‘ri ID'); return n; };
 const stamp = v => v ? new Date(v) : null;
@@ -137,6 +139,53 @@ app.get('/crm/api/dashboard',auth,safe(async(req,res)=>{
     count(*) FILTER (WHERE status='Sotib olmadi')::int AS lost,
     count(*)::int AS total FROM crm_leads WHERE NOT anonymized AND merged_into_id IS NULL ${scope}`);
   res.json(rows[0]);
+}));
+app.get('/crm/api/tasks',auth,safe(async(req,res)=>{
+  const args=roleAdmin(req.user)?[]:[req.user.id];
+  const where=roleAdmin(req.user)?'':'WHERE t.assignee_id=$1';
+  const rows=(await q(`SELECT t.*,s.name AS assignee_name,c.name AS creator_name FROM crm_tasks t
+    JOIN crm_staff s ON s.id=t.assignee_id LEFT JOIN crm_staff c ON c.id=t.created_by ${where}
+    ORDER BY CASE WHEN t.status='open' THEN 0 ELSE 1 END,t.due_at NULLS LAST,t.created_at DESC LIMIT 500`,args)).rows;
+  res.json(rows);
+}));
+app.post('/crm/api/tasks',auth,admin,mutation,safe(async(req,res)=>{
+  const title=str(req.body.title).slice(0,180),details=str(req.body.details).slice(0,1000),assignee=id(req.body.assignee_id);
+  const leadId=req.body.lead_id?id(req.body.lead_id):null,due=req.body.due_at?stamp(req.body.due_at):null;
+  if(title.length<3||due&&Number.isNaN(due.getTime()))throw new Error('Vazifa nomi yoki muddati noto‘g‘ri');
+  const seller=(await q("SELECT id FROM crm_staff WHERE id=$1 AND role='operator' AND active",[assignee])).rows[0];
+  if(!seller)throw new Error('Faol sotuvchi topilmadi');
+  const client=await db.connect();try{
+    await client.query('BEGIN');
+    if(leadId){
+      const lead=(await client.query('SELECT * FROM crm_leads WHERE id=$1 FOR UPDATE',[leadId])).rows[0];
+      if(!lead||lead.anonymized||lead.merged_into_id)throw new Error('Lead topilmadi');
+      if(lead.assignee_id&&Number(lead.assignee_id)!==assignee)throw new Error('Lead boshqa sotuvchiga biriktirilgan');
+      if(!lead.assignee_id){await client.query('UPDATE crm_leads SET assignee_id=$2,updated_at=now() WHERE id=$1',[leadId,assignee]);await record(client,leadId,req.user.id,'assigned',null,String(assignee),'Vazifa orqali');}
+    }
+    const task=(await client.query("INSERT INTO crm_tasks(title,details,assignee_id,created_by,lead_id,due_at,source) VALUES($1,$2,$3,$4,$5,$6,'web') RETURNING id",[title,details,assignee,req.user.id,leadId,due])).rows[0];
+    await client.query("INSERT INTO crm_task_events(task_id,actor_id,kind) VALUES($1,$2,'created')",[task.id,req.user.id]);
+    await client.query('COMMIT');res.json({id:task.id});
+  }catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}
+}));
+app.patch('/crm/api/tasks/:id',auth,mutation,safe(async(req,res)=>{
+  const taskId=id(req.params.id),status=str(req.body.status);
+  if(!['open','done'].includes(status))throw new Error('Vazifa holati noto‘g‘ri');
+  const task=(await q('SELECT * FROM crm_tasks WHERE id=$1',[taskId])).rows[0];
+  if(!task||!roleAdmin(req.user)&&Number(task.assignee_id)!==Number(req.user.id)){const e=new Error('Vazifa topilmadi');e.status=404;throw e;}
+  if(task.status!==status){
+    await q("UPDATE crm_tasks SET status=$2,completed_at=CASE WHEN $2='done' THEN now() ELSE NULL END,updated_at=now() WHERE id=$1",[taskId,status]);
+    await q('INSERT INTO crm_task_events(task_id,actor_id,kind,note) VALUES($1,$2,$3,$4)',[taskId,req.user.id,status,str(req.body.note).slice(0,500)]);
+  }
+  res.json({ok:true});
+}));
+app.get('/crm/api/agent/status',auth,owner,safe(async(req,res)=>{
+  const last=bot.prepare('SELECT slot,queued_at FROM agent_report_slots ORDER BY slot DESC LIMIT 1').get();
+  const providers=availableProviders();
+  res.json({ai_enabled:providers.length>0,providers,last_report:last||null,report_times:['12:00','17:00'],time_zone:'Asia/Tashkent'});
+}));
+app.post('/crm/api/agent/report',auth,owner,mutation,safe(async(req,res)=>{
+  bot.prepare("INSERT INTO agent_requests(telegram_id,kind,payload,created_at) VALUES(?,'report','',?)").run(req.user.telegram_id,sqlNow());
+  res.json({ok:true});
 }));
 app.get('/crm/api/leads',auth,safe(async(req,res)=>{
   const where=['NOT l.anonymized','l.merged_into_id IS NULL'];const args=[];
@@ -328,4 +377,6 @@ app.use((err,req,res,next)=>{console.error('CRM error:',err.message);res.status(
 await q(fs.readFileSync(path.join(here,'schema.sql'),'utf8'));
 await syncBot();
 setInterval(()=>syncBot().catch(e=>console.error('Bot sync failed:',e.message)),10000).unref();
+await agent.tick().catch(e=>console.error('Agent startup failed:',e.message));
+setInterval(()=>agent.tick().catch(e=>console.error('Agent tick failed:',e.message)),5000).unref();
 app.listen(Number(process.env.PORT||8787),'0.0.0.0',()=>console.log('ITLIVE CRM listening'));
