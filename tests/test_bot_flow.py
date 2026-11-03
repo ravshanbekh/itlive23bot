@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock
+from io import BytesIO
 
 import pytest
 from aiogram import Bot, Dispatcher
@@ -8,10 +9,11 @@ from itlive.bot import create_router
 from itlive.db import Store
 
 
-def update_message(update_id, text=None, contact=None):
+def update_message(update_id, text=None, contact=None, voice=None):
     message={"message_id":update_id,"date":1,"chat":{"id":333,"type":"private"},"from":{"id":333,"is_bot":False,"first_name":"Ali"}}
     if text is not None: message["text"]=text
     if contact is not None: message["contact"]=contact
+    if voice is not None: message["voice"]=voice
     return Update.model_validate({"update_id":update_id,"message":message})
 
 
@@ -69,6 +71,22 @@ async def test_owner_agent_report_and_task_queue(tmp_path,monkeypatch):
     assert [(r["telegram_id"],r["kind"]) for r in rows]==[(333,"report"),(333,"task")]
     assert "Lead #12" in rows[1]["payload"]
     assert store.one("SELECT 1 FROM agent_modes WHERE user_id=333") is None
+    await bot.session.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_can_send_natural_text_and_voice_without_button(tmp_path,monkeypatch):
+    store=Store(tmp_path/"voice.sqlite3"); store.init(333)
+    bot=Bot("123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
+    monkeypatch.setattr(Bot,"__call__",AsyncMock())
+    monkeypatch.setattr(Bot,"download",AsyncMock(return_value=BytesIO(b"ogg-audio")))
+    dp=Dispatcher(); dp.include_router(create_router(store,"https://example.org"))
+    await dp.feed_update(bot,update_message(1,"bobur barcha leadlarga bugun soat 20.00 gacha telefon qilsin"))
+    await dp.feed_update(bot,update_message(2,voice={"file_id":"test-voice","file_unique_id":"unique","duration":4,"file_size":9}))
+    rows=store.all("SELECT id,kind,payload FROM agent_requests ORDER BY id")
+    assert [r["kind"] for r in rows]==["task","task"]
+    assert rows[0]["payload"].startswith("bobur barcha")
+    assert store.one("SELECT audio FROM agent_voice_files WHERE request_id=?",(rows[1]["id"],))["audio"]==b"ogg-audio"
     await bot.session.close()
 
 

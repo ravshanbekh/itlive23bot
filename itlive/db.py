@@ -65,6 +65,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS login_attempts(ip_hash TEXT PRIMARY KEY, count INTEGER NOT NULL, window_start TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS agent_modes(user_id INTEGER PRIMARY KEY, mode TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS agent_requests(id INTEGER PRIMARY KEY, telegram_id INTEGER NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('report','task')), payload TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, processed_at TEXT);
+            CREATE TABLE IF NOT EXISTS agent_voice_files(request_id INTEGER PRIMARY KEY REFERENCES agent_requests(id) ON DELETE CASCADE, audio BLOB NOT NULL, mime_type TEXT NOT NULL DEFAULT 'audio/ogg');
             CREATE TABLE IF NOT EXISTS agent_replies(request_id INTEGER PRIMARY KEY REFERENCES agent_requests(id), queued_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS agent_report_slots(slot TEXT PRIMARY KEY, queued_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS agent_alerts(alert_key TEXT PRIMARY KEY, queued_at TEXT NOT NULL);

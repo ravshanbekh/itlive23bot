@@ -1,9 +1,5 @@
 # ITLIVE qabul boti va CRM
 
-React, Node.js va PostgreSQL asosidagi CRM sayti `crm-web/` papkasida. Uning arxitekturasi, ishga tushirish va zaxiralash tartibi [CRM README](crm-web/README.md) faylida. Telegram bot shu repozitoriy ildizida mustaqil ishlashda davom etadi; Caddy `/crm/` yo‘lini CRM xizmatiga yo‘naltiradi.
-
-Egasi botning shaxsiy chatida **🤖 AI nazorat** tugmasi orqali CRM hisobotini so‘rashi yoki sotuvchiga vazifa berishi mumkin. `/report` va `/task sotuvchi_login | vazifa matni` buyruqlari ham ishlaydi. Rejali hisobotlar Toshkent vaqti bilan 12:00 va 17:00 da CRM xizmati tomonidan shu botning xabar navbatiga qo‘shiladi. Vazifalar va AI sozlamalari [CRM README](crm-web/README.md#owner-agent-and-sales-tasks)da yozilgan.
-
 Manba TZ: [[02-Loyihalar/ITLIVE — Telegram qabul boti va admin paneli — TZ]]. Python 3.12+, aiogram 3, aiohttp, Jinja2, SQLite. Bir Railway servisida webhook va panel ishlaydi.
 
 ## Mahalliy ishga tushirish
@@ -50,6 +46,8 @@ curl -fsS http://127.0.0.1:8765/health
 ```
 
 Panelga kirish uchun botga `/admin` yuboring va kelgan HTTPS havolani oching. Serverning 8765 portini Internetga ochmang. Botga `restarting` holati tushsa `docker compose logs --tail 100 app` bilan tekshiring. Serverdagi `data/` papkasi SQLite bazasini saqlaydi; zaxira uchun `python -m itlive.backup` yoki hostdagi SQLite online backup usulidan foydalaning.
+
+Egasi botning shaxsiy chatiga oddiy tilda vazifa yozishi yoki 5 daqiqagacha, 10 MB gacha ovozli xabar yuborishi mumkin; **🤖 AI nazorat → 📝 Vazifa berish** tugmasi ham ishlaydi. Bot sotuvchi ismi yoki loginini CRM ro‘yxatidan topadi, AI kaliti mavjud bo‘lsa topshiriqni ravon o‘zbekchada yozadi va sotuvchining CRM **Vazifalar** sahifasiga biriktiradi. Ovozli xabarni matnga aylantirish uchun admin panelda Groq, OpenAI yoki Gemini kaliti kerak. Noaniq sotuvchi bo‘lsa bot aniqlashtirish so‘raydi. `/report` va `/task sotuvchi_login | vazifa matni` buyruqlari ham ishlaydi. Rejali hisobotlar Toshkent vaqti bilan 12:00 va 17:00 da CRM xizmati tomonidan shu botning xabar navbatiga qo‘shiladi. Vazifalar va AI sozlamalari `crm-web/README.md`da yozilgan.
 
 Kundalik lokal zaxirani yoqish:
 

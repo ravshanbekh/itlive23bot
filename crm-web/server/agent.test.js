@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { availableProviders, dueReportSlot, formatReport, parseDirectTask, parseTask, tashkentTime } from './agent.js';
+import { availableProviders, dueReportSlot, formatReport, parseDirectTask, parseTask, resolveSeller, taskDeadline, tashkentTime, transcribeVoice } from './agent.js';
 
 test('daily slots use Tashkent time', () => {
   assert.equal(dueReportSlot(new Date('2026-11-03T06:59:00Z')), null);
@@ -15,6 +15,52 @@ test('explicit seller task extracts lead and tomorrow deadline', () => {
   assert.equal(task.lead_id, 12);
   assert.ok(new Date(task.due_at).getTime() > Date.now());
   assert.equal(parseDirectTask('Ali vazifa', [{id: 42, name: 'Ali', login_name: 'ali'}]), null);
+});
+
+test('natural Uzbek task resolves unique seller and dotted deadline', async () => {
+  const sellers=[{id:42,name:'Bobur Karimov',login_name:'bobur1'},{id:43,name:'Ali Valiyev',login_name:'ali1'}];
+  const text='bobur barcha leadlarga ertaga soat 20.00 gacha telefon qilsin';
+  assert.equal(resolveSeller(text,sellers).id,42);
+  assert.equal(resolveSeller('Bobur va Ali birga ishlasin',sellers),null);
+  assert.equal(taskDeadline(text,new Date('2026-11-03T13:00:00Z')),'2026-11-04T15:00:00.000Z');
+  const task=await parseTask(text,sellers,{});
+  assert.equal(task.seller_id,42);
+  assert.match(task.details,/barcha leadlarga/i);
+  assert.equal(task.title,'Barcha leadlarga qo‘ng‘iroq qilish');
+  const byLead=await parseTask('Lead #12 ga qo‘ng‘iroq qiling',sellers,{});
+  assert.equal(byLead.seller_id,null);
+  assert.equal(byLead.lead_id,12);
+});
+
+test('voice is sent as audio to provider and transcript returned', async () => {
+  const previous=globalThis.fetch;
+  globalThis.fetch=async(url,options)=>{
+    assert.match(url,/groq.com.*audio\/transcriptions/);
+    assert.equal(options.body.get('model'),'whisper-large-v3-turbo');
+    assert.equal(options.body.get('file').type,'audio/ogg');
+    return {ok:true,json:async()=>({text:'Bobur barcha leadlarga qo‘ng‘iroq qilsin'})};
+  };
+  try { assert.match(await transcribeVoice(Buffer.from('ogg'),'audio/ogg',{groq:'test-key'}),/Bobur/); }
+  finally { globalThis.fetch=previous; }
+});
+
+test('OpenAI and Gemini voice transcription use configured provider', async () => {
+  const previous=globalThis.fetch;
+  try {
+    globalThis.fetch=async(url,options)=>{
+      assert.match(url,/openai.com.*audio\/transcriptions/);
+      assert.equal(options.body.get('model'),'gpt-transcribe');
+      return {ok:true,json:async()=>({text:'Ali yangi leadlarni tekshirsin'})};
+    };
+    assert.match(await transcribeVoice(Buffer.from('ogg'),'audio/ogg',{openai:'test-key'}),/Ali/);
+    globalThis.fetch=async(url,options)=>{
+      assert.match(url,/generativelanguage.googleapis.com.*interactions/);
+      const body=JSON.parse(options.body);
+      assert.equal(body.input[1].mime_type,'audio/ogg');
+      return {ok:true,json:async()=>({output_text:'Bobur leadlarga telefon qilsin'})};
+    };
+    assert.match(await transcribeVoice(Buffer.from('ogg'),'audio/ogg',{gemini:'test-key'}),/Bobur/);
+  } finally { globalThis.fetch=previous; }
 });
 
 test('report contains verifiable counts and seller load', () => {

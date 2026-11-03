@@ -1,6 +1,7 @@
 import html
 import re
 import secrets
+from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
@@ -81,6 +82,22 @@ def create_router(store: Store, base_url: str):
     def queue_agent(target,kind,payload=""):
         with store.connection() as db:
             db.execute("INSERT INTO agent_requests(telegram_id,kind,payload,created_at) VALUES(?,?,?,?)",(target.from_user.id,kind,payload,utc_now()))
+
+    async def queue_voice(message):
+        voice=message.voice
+        if voice.duration > 300 or (voice.file_size or 0) > 10_000_000:
+            await message.answer("Ovozli vazifa 5 daqiqadan va 10 MB dan oshmasin."); return
+        try:
+            stream=await message.bot.download(voice.file_id,destination=BytesIO())
+            audio=stream.getvalue()
+            if not audio or len(audio)>10_000_000: raise ValueError("Ovozli xabar hajmi noto‘g‘ri")
+        except Exception:
+            await message.answer("Ovozli xabarni yuklab bo‘lmadi. Qayta yuboring."); return
+        with store.connection() as db:
+            request=db.execute("INSERT INTO agent_requests(telegram_id,kind,payload,created_at) VALUES(?,'task','[voice]',?)",(message.from_user.id,utc_now()))
+            db.execute("INSERT INTO agent_voice_files(request_id,audio,mime_type) VALUES(?,?,'audio/ogg')",(request.lastrowid,audio))
+            db.execute("DELETE FROM agent_modes WHERE user_id=?",(message.from_user.id,))
+        await message.answer("Ovozli vazifa qabul qilindi. Matnga aylantirib, sotuvchiga yuboraman. Natija shu chatga keladi.")
 
     async def content_list(target, table, title, prefix):
         extra={"courses":"AND TRIM(COALESCE(NULLIF(description,''),short_description))<>''","mentors":"AND TRIM(bio)<>''","branches":"AND TRIM(address)<>''"}[table]
@@ -217,7 +234,7 @@ def create_router(store: Store, base_url: str):
         else:
             with store.connection() as db:
                 db.execute("INSERT INTO agent_modes(user_id,mode,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at",(message.from_user.id,"task",utc_now()))
-            await message.answer("Vazifani yozing. Masalan: Ali | Bugun 15:00 gacha lead #12 ga qo‘ng‘iroq qilsin. Bekor qilish uchun “Bekor qilish” yuboring.")
+            await message.answer("Vazifani oddiy tilda yozing yoki ovoz yuboring. Masalan: Bobur bugun 20:00 gacha barcha leadlarga qo‘ng‘iroq qilsin. Bekor qilish uchun “Bekor qilish” yuboring.")
 
     @router.callback_query()
     async def callbacks(call:CallbackQuery):
@@ -233,7 +250,7 @@ def create_router(store: Store, base_url: str):
             if data=="agent:task":
                 with store.connection() as db:
                     db.execute("INSERT INTO agent_modes(user_id,mode,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode,updated_at=excluded.updated_at",(call.from_user.id,"task",utc_now()))
-                await send(call,"Vazifani yozing. Masalan: Ali | Bugun 15:00 gacha lead #12 ga qo‘ng‘iroq qilsin. Bekor qilish uchun “Bekor qilish” yuboring."); return
+                await send(call,"Vazifani oddiy tilda yozing yoki ovoz yuboring. Masalan: Bobur bugun 20:00 gacha barcha leadlarga qo‘ng‘iroq qilsin. Bekor qilish uchun “Bekor qilish” yuboring."); return
             await call.answer("Tugma eskirgan",show_alert=True); return
         if data=="home": await home(call); return
         if data=="courses": await content_list(call,"courses","Faol kurslar:","course"); return
@@ -342,6 +359,8 @@ def create_router(store: Store, base_url: str):
         if message.text=="Bekor qilish":
             with store.connection() as db: db.execute("DELETE FROM agent_modes WHERE user_id=?",(message.from_user.id,))
             store.clear_draft(message.from_user.id); await home(message); return
+        if owner_allowed(message) and message.voice:
+            await queue_voice(message); return
         if owner_allowed(message) and store.one("SELECT 1 FROM agent_modes WHERE user_id=? AND mode='task'",(message.from_user.id,)):
             body=(message.text or "").strip()
             if not body or len(body)>800:
@@ -351,6 +370,9 @@ def create_router(store: Store, base_url: str):
                 db.execute("DELETE FROM agent_modes WHERE user_id=?",(message.from_user.id,))
             await message.answer("Vazifa qabul qilindi. Natija shu chatga keladi."); return
         draft=store.get_draft(message.from_user.id)
+        if owner_allowed(message) and message.text and not draft and not message.text.startswith("/"):
+            queue_agent(message,"task",message.text[:800])
+            await message.answer("Vazifa qabul qilindi. Natija shu chatga keladi."); return
         if not draft or draft.get("step") not in ("name","phone","preferred","note"):
             await home(message); return
         step=draft["step"]

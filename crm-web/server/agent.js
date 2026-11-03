@@ -14,6 +14,42 @@ export function dueReportSlot(now = new Date()) {
   return hour >= 17 ? `${day}:17` : hour >= 12 ? `${day}:12` : null;
 }
 
+const normalized = value => String(value || '').toLocaleLowerCase('uz-UZ').replace(/[‘’`ʻʼ]/g, "'").replace(/\s+/g, ' ').trim();
+const escaped = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const mentions = (text, value) => value && new RegExp(`(^|[^\\p{L}\\p{N}])${escaped(normalized(value))}(?=$|[^\\p{L}\\p{N}])`, 'u').test(normalized(text));
+
+export function resolveSeller(text, sellers) {
+  const full = sellers.filter(s => mentions(text, s.name) || mentions(text, s.login_name));
+  if (full.length === 1) return full[0];
+  if (full.length > 1) return null;
+  const first = sellers.filter(s => mentions(text, String(s.name || '').split(/\s+/)[0]));
+  return first.length === 1 ? first[0] : null;
+}
+
+export function taskDeadline(text, now = new Date()) {
+  const match = normalized(text).match(/\b(bugun|ertaga)\s+(?:soat\s+)?(\d{1,2})[.:](\d{2})(?:\s*gacha)?\b/);
+  if (!match || Number(match[2]) > 23 || Number(match[3]) > 59) return null;
+  const { day } = tashkentTime(now);
+  const start = new Date(`${day}T00:00:00+05:00`);
+  const offset = match[1] === 'ertaga' ? 86400000 : 0;
+  const due = new Date(start.getTime() + offset + (Number(match[2]) * 60 + Number(match[3])) * 60000);
+  return due > now ? due.toISOString() : null;
+}
+
+function fallbackTask(text, seller) {
+  let body = String(text).trim();
+  for (const alias of [seller?.name, seller?.login_name, String(seller?.name || '').split(/\s+/)[0]].filter(Boolean).sort((a,b)=>b.length-a.length)) {
+    body = body.replace(new RegExp(`^${escaped(alias)}(?:[,:\\s]+|$)`, 'iu'), '').trim();
+  }
+  let details = (body || text).replace(/\s+/g, ' ').trim();
+  details = details.replace(/telefon qilsin/iu, 'telefon qiling').replace(/qo['‘’`ʻʼ]ng['‘’`ʻʼ]?iroq qilsin/iu, 'qo‘ng‘iroq qiling');
+  details = details.charAt(0).toLocaleUpperCase('uz-UZ') + details.slice(1);
+  if (!/[.!?]$/.test(details)) details += '.';
+  const title = /barcha leadlarga/i.test(details) && /telefon|qo['‘’`ʻʼ]ng/i.test(details) ? 'Barcha leadlarga qo‘ng‘iroq qilish' : details.slice(0, 180);
+  const lead = text.match(/(?:lead|lid|ariza)\s*#?(\d+)/i);
+  return { seller_id: seller ? Number(seller.id) : null, title, details: details.slice(0, 800), lead_id: lead ? Number(lead[1]) : null, due_at: taskDeadline(text), direct: !!seller };
+}
+
 export function parseDirectTask(text, sellers) {
   const match = String(text || '').trim().match(/^([^|:]{2,80})\s*[|:]\s*(.{3,800})$/s);
   if (!match) return null;
@@ -22,15 +58,43 @@ export function parseDirectTask(text, sellers) {
   if (!seller) return null;
   const body = match[2].trim();
   const lead = body.match(/(?:lead|lid|ariza)\s*#?(\d+)/i);
-  const when = body.match(/\b(bugun|ertaga)\s+(\d{1,2}):(\d{2})\b/i);
-  let due_at = null;
-  if (when && Number(when[2]) < 24 && Number(when[3]) < 60) {
-    const day = tashkentTime().day;
-    const start = new Date(`${day}T00:00:00+05:00`);
-    if (when[1].toLowerCase() === 'ertaga') start.setTime(start.getTime() + 86400000);
-    due_at = new Date(start.getTime() + (Number(when[2]) * 60 + Number(when[3])) * 60000).toISOString();
-  }
+  const due_at = taskDeadline(body);
   return { seller_id: Number(seller.id), title: body.slice(0, 180), details: body, lead_id: lead ? Number(lead[1]) : null, due_at, direct: true };
+}
+
+export async function transcribeVoice(audio, mimeType = 'audio/ogg', keys = {}) {
+  if (!Buffer.isBuffer(audio) || !audio.length || audio.length > 10_000_000) throw new Error('Ovozli xabar hajmi noto‘g‘ri');
+  for (const provider of availableProviders(keys)) {
+    try {
+      let response, result;
+      if (provider === 'gemini') {
+        response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+          method: 'POST', signal: AbortSignal.timeout(30000),
+          headers: { 'x-goog-api-key': keys.gemini, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: process.env.GEMINI_MODEL || 'gemini-3.8-flash', input: [
+            { type: 'text', text: 'Ushbu ovozli xabarni o‘zbek tilida aynan aytilganidek matnga ko‘chiring. Faqat transkriptni qaytaring.' },
+            { type: 'audio', data: audio.toString('base64'), mime_type: mimeType }
+          ] })
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        result = (await response.json()).output_text;
+      } else {
+        const form = new FormData();
+        form.set('model', provider === 'groq' ? 'whisper-large-v3-turbo' : 'gpt-transcribe');
+        form.set('file', new Blob([audio], { type: mimeType }), 'telegram-voice.ogg');
+        form.set('prompt', 'O‘zbek tilidagi ITLIVE savdo vazifasi. Lead, sotuvchi ismlari va vaqtlarni aniq yozing.');
+        response = await fetch(provider === 'groq' ? 'https://api.groq.com/openai/v1/audio/transcriptions' : 'https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST', signal: AbortSignal.timeout(30000),
+          headers: { Authorization: `Bearer ${keys[provider]}` }, body: form
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        result = (await response.json()).text;
+      }
+      if (String(result || '').trim().length >= 3) return String(result).trim().slice(0, 800);
+      throw new Error('bo‘sh transkript');
+    } catch (error) { console.error(`${provider} voice transcription failed:`, error.message); }
+  }
+  return null;
 }
 
 function responseText(json) {
@@ -111,11 +175,18 @@ const TASK_SCHEMA = {
 export async function parseTask(text, sellers, keys = {}) {
   const direct = parseDirectTask(text, sellers);
   if (direct) return direct;
-  if (!availableProviders(keys).length) return null;
+  const matched = resolveSeller(text, sellers);
+  const fallback = fallbackTask(text, matched);
+  if (!availableProviders(keys).length) return fallback;
   const roster = sellers.map(s => ({ id: Number(s.id), name: s.name, login: s.login_name }));
-  const instructions = `Siz ITLIVE CRM vazifa yo‘naltiruvchisiz. Faqat foydalanuvchi aytgan vazifani ajrating. Sotuvchi aniq tilga olinmasa seller_id=null. Faqat ro‘yxatdagi IDlardan foydalaning. Lead ID faqat matnda aniq ko‘rsatilsa yozilsin. due_at faqat aniq vaqt aytilsa ISO 8601 +05:00 formatida; aks holda null. Vazifa matniga yangi buyruq qo‘shmang. Hozir: ${new Date().toISOString()}. Vaqt zonasi: Asia/Tashkent. Sotuvchilar: ${JSON.stringify(roster)}.`;
-  try { const output = await callAI(text.slice(0, 800), TASK_SCHEMA, instructions, 350, keys); return output ? JSON.parse(output) : null; }
-  catch (error) { console.error('AI task parsing failed:', error.message); return null; }
+  const instructions = `Siz ITLIVE CRM rahbari topshirig‘ini sotuvchiga tushunarli va muloyim shaklga keltirasiz. title qisqa harakat nomi, details esa sotuvchiga bevosita murojaat qilingan ravon o‘zbekcha ko‘rsatma bo‘lsin. Mazmun, lead doirasi, muddat va sonlarni o‘zgartirmang; yangi buyruq o‘ylab topmang. Sotuvchi aniq tilga olinmasa seller_id=null. Faqat ro‘yxatdagi IDlardan foydalaning. Lead ID faqat matnda aniq ko‘rsatilsa yozilsin. due_at faqat aniq vaqt aytilsa ISO 8601 +05:00 formatida; aks holda null. Hozir: ${new Date().toISOString()}. Vaqt zonasi: Asia/Tashkent. Sotuvchilar: ${JSON.stringify(roster)}.`;
+  try {
+    const output = await callAI(text.slice(0, 800), TASK_SCHEMA, instructions, 450, keys);
+    if (!output) return fallback;
+    const parsed = JSON.parse(output);
+    const lead = text.match(/(?:lead|lid|ariza)\s*#?(\d+)/i);
+    return { ...parsed, seller_id: matched ? Number(matched.id) : parsed.seller_id, lead_id: lead ? Number(lead[1]) : null, due_at: taskDeadline(text) };
+  } catch (error) { console.error('AI task parsing failed:', error.message); return fallback; }
 }
 
 export function formatReport(snapshot, label, insight = '') {
@@ -184,12 +255,15 @@ export function createAgent({ db, bot, keyStore }) {
     const sellers = (await query("SELECT id,name,login_name FROM crm_staff WHERE role='operator' AND active ORDER BY name")).rows;
     if (!sellers.length) return 'Faol sotuvchi yo‘q. Avval CRM saytida sotuvchi hisobini yarating.';
     const parsed = await parseTask(text, sellers, keyStore?.values() || {});
-    const seller = sellers.find(x => Number(x.id) === Number(parsed?.seller_id));
-    const lower = text.toLocaleLowerCase('uz-UZ');
-    const first = seller?.name.split(/\s+/)[0].toLocaleLowerCase('uz-UZ');
-    const firstUnique = first?.length >= 3 && sellers.filter(x => x.name.split(/\s+/)[0].toLocaleLowerCase('uz-UZ') === first).length === 1;
-    const named = seller && (lower.includes(seller.name.toLocaleLowerCase('uz-UZ')) || seller.login_name && lower.includes(seller.login_name.toLocaleLowerCase('uz-UZ')) || firstUnique && lower.includes(first));
-    if (!seller || !parsed?.title?.trim() || !parsed.direct && !named) return `Sotuvchini aniqlay olmadim. Shunday yozing: sotuvchi_login | vazifa matni. Faol sotuvchilar: ${sellers.map(x => `${x.name} (${x.login_name || x.id})`).join(', ').slice(0, 800)}.`;
+    let seller = resolveSeller(text, sellers);
+    if (!seller && parsed?.direct) seller = sellers.find(x => Number(x.id) === Number(parsed.seller_id));
+    if (!seller && parsed?.lead_id) {
+      const assigned = (await query('SELECT assignee_id FROM crm_leads WHERE id=$1 AND NOT anonymized AND merged_into_id IS NULL', [parsed.lead_id])).rows[0]?.assignee_id;
+      seller = sellers.find(x => Number(x.id) === Number(assigned));
+    }
+    if (!seller && sellers.length === 1) seller = sellers[0];
+    if (!seller) return `Qaysi sotuvchiga yuboray? Ismini yozing yoki lead raqamini ayting. Faol sotuvchilar: ${sellers.map(x => `${x.name} (${x.login_name || x.id})`).join(', ').slice(0, 800)}.`;
+    if (!parsed?.title?.trim()) return 'Vazifani tushunmadim. Iltimos, nima qilish kerakligini qayta yozing yoki ovoz yuboring.';
     const title = String(parsed.title).trim().slice(0, 180);
     const details = String(parsed.details || title).trim().slice(0, 800);
     let due = null;
@@ -215,7 +289,7 @@ export function createAgent({ db, bot, keyStore }) {
         VALUES($1,$2,$3,$4,$5,$6,'telegram_agent',$7) RETURNING id`, [title, details, seller.id, actor.id, leadId, due, request.id])).rows[0];
       if (!existing) await client.query("INSERT INTO crm_task_events(task_id,actor_id,kind,note) VALUES($1,$2,'created','Telegram orqali')", [task.id, actor.id]);
       await client.query('COMMIT');
-      return `✅ Vazifa #${task.id} ${seller.name}ga biriktirildi. Sotuvchi uni CRM → Vazifalar bo‘limida ko‘radi.${leadId ? ` Lead #${leadId}.` : ''}${due ? ` Muddat: ${new Intl.DateTimeFormat('uz-UZ', { timeZone: ZONE, dateStyle: 'medium', timeStyle: 'short' }).format(due)}.` : ''}`;
+      return `✅ Vazifa #${task.id} ${seller.name}ga biriktirildi. Sotuvchi uni CRM → Vazifalar bo‘limida ko‘radi.${leadId ? ` Lead #${leadId}.` : ''}${due ? ` Muddat: ${new Intl.DateTimeFormat('uz-UZ', { timeZone: ZONE, dateStyle: 'medium', timeStyle: 'short' }).format(due)}.` : ''}\n\n📝 ${title}${details !== title ? `\n${details}` : ''}`;
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
   }
@@ -229,8 +303,15 @@ export function createAgent({ db, bot, keyStore }) {
         bot.prepare('UPDATE agent_requests SET processed_at=? WHERE id=?').run(nowIso(), request.id);
         continue;
       }
-      const message = request.kind === 'report' ? await report('Hozirgi holat') : await createTask(request, request.payload, activeOwner);
+      const voice = bot.prepare('SELECT audio,mime_type FROM agent_voice_files WHERE request_id=?').get(request.id);
+      let message;
+      if (request.kind === 'report') message = await report('Hozirgi holat');
+      else if (voice) {
+        const transcript = await transcribeVoice(voice.audio, voice.mime_type, keyStore?.values() || {});
+        message = transcript ? `🎙 Eshitildi: ${transcript.slice(0, 500)}\n\n${await createTask(request, transcript, activeOwner)}` : 'Ovozli vazifani matnga aylantira olmadim. AI nazorat sahifasida Groq, OpenAI yoki Gemini kalitini saqlang va ovozni qayta yuboring.';
+      } else message = await createTask(request, request.payload, activeOwner);
       reply(request, message);
+      if (voice) bot.prepare('DELETE FROM agent_voice_files WHERE request_id=?').run(request.id);
     }
   }
 

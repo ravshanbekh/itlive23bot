@@ -385,6 +385,7 @@ app.get(/^\/crm(?:\/.*)?$/, (req,res)=>res.sendFile(path.join(assets,'index.html
 app.use((err,req,res,next)=>{console.error('CRM error:',err.message);res.status(err.status||400).json({error:err.message||'Xatolik yuz berdi'});});
 
 await q(fs.readFileSync(path.join(here,'schema.sql'),'utf8'));
+bot.exec("CREATE TABLE IF NOT EXISTS agent_voice_files(request_id INTEGER PRIMARY KEY REFERENCES agent_requests(id) ON DELETE CASCADE, audio BLOB NOT NULL, mime_type TEXT NOT NULL DEFAULT 'audio/ogg')");
 await keyStore.load();
 await syncBot();
 setInterval(()=>syncBot().catch(e=>console.error('Bot sync failed:',e.message)),10000).unref();
