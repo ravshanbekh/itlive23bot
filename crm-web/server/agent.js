@@ -77,7 +77,7 @@ export async function transcribeVoice(audio, mimeType = 'audio/ogg', keys = {}) 
         response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
           method: 'POST', signal: AbortSignal.timeout(45000),
           headers: { 'x-goog-api-key': keys.gemini, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: process.env.GEMINI_MODEL || 'gemini-3.6-flash', store: false, generation_config: { thinking_level: 'low', max_output_tokens: 1000 }, input: [
+          body: JSON.stringify({ model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite', store: false, generation_config: { thinking_level: 'low', max_output_tokens: 1000 }, input: [
             { type: 'text', text: 'Ushbu ovozli xabarni o‘zbek tilida aynan aytilganidek matnga ko‘chiring. Faqat transkriptni qaytaring.' },
             { type: 'audio', data: audio.toString('base64'), mime_type: mimeType }
           ] })
@@ -145,7 +145,7 @@ async function callAI(input, schema, instructions, maxOutput = 350, saved = {}) 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         result = responseText(await response.json());
       } else {
-        const model = encodeURIComponent(process.env.GEMINI_MODEL || 'gemini-3.6-flash');
+        const model = encodeURIComponent(process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite');
         response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST', signal: AbortSignal.timeout(30000),
           headers: { 'x-goog-api-key': keys.gemini, 'Content-Type': 'application/json' },
@@ -267,7 +267,6 @@ export function createAgent({ db, bot, keyStore }) {
       const assigned = (await query('SELECT assignee_id FROM crm_leads WHERE id=$1 AND NOT anonymized AND merged_into_id IS NULL', [parsed.lead_id])).rows[0]?.assignee_id;
       seller = sellers.find(x => Number(x.id) === Number(assigned));
     }
-    if (!seller && sellers.length === 1) seller = sellers[0];
     if (!seller) return `Qaysi sotuvchiga yuboray? Ismini yozing yoki lead raqamini ayting. Faol sotuvchilar: ${sellers.map(x => `${x.name} (${x.login_name || x.id})`).join(', ').slice(0, 800)}.`;
     if (!parsed?.title?.trim()) return 'Vazifani tushunmadim. Iltimos, nima qilish kerakligini qayta yozing yoki ovoz yuboring.';
     const title = String(parsed.title).trim().slice(0, 180);

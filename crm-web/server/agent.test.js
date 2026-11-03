@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { availableProviders, dueReportSlot, formatReport, parseDirectTask, parseTask, resolveSeller, taskDeadline, tashkentTime, transcribeVoice } from './agent.js';
+import { availableProviders, createAgent, dueReportSlot, formatReport, parseDirectTask, parseTask, resolveSeller, taskDeadline, tashkentTime, transcribeVoice } from './agent.js';
 
 test('daily slots use Tashkent time', () => {
   assert.equal(dueReportSlot(new Date('2026-11-03T06:59:00Z')), null);
@@ -30,6 +30,23 @@ test('natural Uzbek task resolves unique seller and dotted deadline', async () =
   const byLead=await parseTask('Lead #12 ga qo‘ng‘iroq qiling',sellers,{});
   assert.equal(byLead.seller_id,null);
   assert.equal(byLead.lead_id,12);
+});
+
+test('natural task is assigned to the named seller, not an unknown name', async () => {
+  const seller={id:42,name:'Bobur Karimov',login_name:'bobur1'};
+  const writes=[];
+  const client={query:async(sql,args=[])=>{writes.push({sql,args});return {rows:sql.includes('RETURNING id')?[{id:7}]:[]};},release:()=>{}};
+  const db={query:async()=>({rows:[seller]}),connect:async()=>client};
+  const bot={prepare:()=>({run:()=>({changes:1})}),transaction:fn=>fn};
+  const agent=createAgent({db,bot,keyStore:{values:()=>({})}});
+  const result=await agent.createTask({id:1},'Bobur barcha leadlarga ertaga soat 20.00 gacha telefon qilsin',{id:1});
+  assert.match(result,/Bobur Karimovga biriktirildi/);
+  const insert=writes.find(x=>x.sql.includes('INSERT INTO crm_tasks'));
+  assert.equal(insert.args[2],42);
+  assert.equal(insert.args[3],1);
+  assert.equal(insert.args[6],1);
+  assert.match(await agent.createTask({id:2},'Ali barcha leadlarga telefon qilsin',{id:1}),/Qaysi sotuvchiga/);
+  assert.equal(writes.filter(x=>x.sql.includes('INSERT INTO crm_tasks')).length,1);
 });
 
 test('voice is sent as audio to provider and transcript returned', async () => {
