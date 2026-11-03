@@ -82,3 +82,8 @@ CREATE TABLE IF NOT EXISTS crm_task_events (
   note TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS crm_ai_keys (
+  provider TEXT PRIMARY KEY CHECK(provider IN ('groq','openai','gemini')),
+  ciphertext TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

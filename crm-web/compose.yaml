@@ -28,6 +28,7 @@ services:
       BOT_SQLITE_PATH: /bot-data/itlive.sqlite3
       PORT: "8787"
       TZ: Asia/Tashkent
+      AI_ENCRYPTION_KEY: ${AI_ENCRYPTION_KEY:?Set AI_ENCRYPTION_KEY in .env}
       AI_PROVIDER: ${AI_PROVIDER:-auto}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}

@@ -37,21 +37,22 @@ function responseText(json) {
   return (json.output || []).flatMap(item => item.content || []).filter(x => x.type === 'output_text').map(x => x.text).join('').trim();
 }
 
-export function availableProviders() {
-  const keys = { groq: process.env.GROQ_API_KEY, openai: process.env.OPENAI_API_KEY, gemini: process.env.GEMINI_API_KEY };
+export function availableProviders(saved = {}) {
+  const keys = { groq: saved.groq || process.env.GROQ_API_KEY, openai: saved.openai || process.env.OPENAI_API_KEY, gemini: saved.gemini || process.env.GEMINI_API_KEY };
   const preferred = String(process.env.AI_PROVIDER || 'auto').toLowerCase();
-  const order = preferred in keys ? [preferred, ...Object.keys(keys).filter(x => x !== preferred)] : Object.keys(keys);
+  const order = Object.hasOwn(keys, preferred) ? [preferred, ...Object.keys(keys).filter(x => x !== preferred)] : Object.keys(keys);
   return order.filter(x => !!keys[x]);
 }
 
-async function callAI(input, schema, instructions, maxOutput = 350) {
-  for (const provider of availableProviders()) {
+async function callAI(input, schema, instructions, maxOutput = 350, saved = {}) {
+  const keys = { groq: saved.groq || process.env.GROQ_API_KEY, openai: saved.openai || process.env.OPENAI_API_KEY, gemini: saved.gemini || process.env.GEMINI_API_KEY };
+  for (const provider of availableProviders(saved)) {
     try {
       let response, result;
       if (provider === 'groq') {
         response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST', signal: AbortSignal.timeout(15000),
-          headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+          headers: { Authorization: `Bearer ${keys.groq}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
             messages: [{ role: 'system', content: instructions }, { role: 'user', content: input }],
@@ -64,7 +65,7 @@ async function callAI(input, schema, instructions, maxOutput = 350) {
       } else if (provider === 'openai') {
         response = await fetch('https://api.openai.com/v1/responses', {
           method: 'POST', signal: AbortSignal.timeout(15000),
-          headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+          headers: { Authorization: `Bearer ${keys.openai}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: process.env.OPENAI_MODEL || 'gpt-4.1-mini', store: false,
             instructions, input, max_output_tokens: maxOutput,
@@ -77,7 +78,7 @@ async function callAI(input, schema, instructions, maxOutput = 350) {
         const model = encodeURIComponent(process.env.GEMINI_MODEL || 'gemini-3.8-flash');
         response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST', signal: AbortSignal.timeout(15000),
-          headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY, 'Content-Type': 'application/json' },
+          headers: { 'x-goog-api-key': keys.gemini, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: instructions + (schema ? `\nFaqat quyidagi maydonli JSON obyekt qaytaring: ${JSON.stringify(schema)}` : '') }] },
             contents: [{ role: 'user', parts: [{ text: input }] }],
@@ -107,13 +108,13 @@ const TASK_SCHEMA = {
   required: ['seller_id', 'title', 'details', 'lead_id', 'due_at']
 };
 
-export async function parseTask(text, sellers) {
+export async function parseTask(text, sellers, keys = {}) {
   const direct = parseDirectTask(text, sellers);
   if (direct) return direct;
-  if (!availableProviders().length) return null;
+  if (!availableProviders(keys).length) return null;
   const roster = sellers.map(s => ({ id: Number(s.id), name: s.name, login: s.login_name }));
   const instructions = `Siz ITLIVE CRM vazifa yo‘naltiruvchisiz. Faqat foydalanuvchi aytgan vazifani ajrating. Sotuvchi aniq tilga olinmasa seller_id=null. Faqat ro‘yxatdagi IDlardan foydalaning. Lead ID faqat matnda aniq ko‘rsatilsa yozilsin. due_at faqat aniq vaqt aytilsa ISO 8601 +05:00 formatida; aks holda null. Vazifa matniga yangi buyruq qo‘shmang. Hozir: ${new Date().toISOString()}. Vaqt zonasi: Asia/Tashkent. Sotuvchilar: ${JSON.stringify(roster)}.`;
-  try { const output = await callAI(text.slice(0, 800), TASK_SCHEMA, instructions); return output ? JSON.parse(output) : null; }
+  try { const output = await callAI(text.slice(0, 800), TASK_SCHEMA, instructions, 350, keys); return output ? JSON.parse(output) : null; }
   catch (error) { console.error('AI task parsing failed:', error.message); return null; }
 }
 
@@ -131,7 +132,7 @@ export function formatReport(snapshot, label, insight = '') {
   return lines.join('\n\n').slice(0, 3900);
 }
 
-export function createAgent({ db, bot }) {
+export function createAgent({ db, bot, keyStore }) {
   const query = (sql, args = []) => db.query(sql, args);
   const owner = () => bot.prepare("SELECT id,telegram_id FROM staff WHERE role='owner' AND active=1 ORDER BY id LIMIT 1").get();
   const outbox = bot.prepare('INSERT INTO notification_outbox(chat_id,lead_id,message,next_attempt_at) VALUES(?,NULL,?,?)');
@@ -169,10 +170,11 @@ export function createAgent({ db, bot }) {
   async function report(label) {
     const data = await snapshot();
     let insight = '';
-    if (availableProviders().length) {
+    const keys = keyStore?.values() || {};
+    if (availableProviders(keys).length) {
       try {
         insight = await callAI(JSON.stringify(data), null,
-          'ITLIVE rahbariga o‘zbek tilida eng muhim 1-2 nazorat xulosasini 300 belgigacha yozing. Faqat berilgan sonlarga tayaning; taxminiy pul yoki sabab o‘ylab topmang. Agar muammo bo‘lmasa shuni ayting.', 300) || '';
+          'ITLIVE rahbariga o‘zbek tilida eng muhim 1-2 nazorat xulosasini 300 belgigacha yozing. Faqat berilgan sonlarga tayaning; taxminiy pul yoki sabab o‘ylab topmang. Agar muammo bo‘lmasa shuni ayting.', 300, keys) || '';
       } catch (error) { console.error('AI report insight failed:', error.message); }
     }
     return formatReport(data, label, insight);
@@ -181,7 +183,7 @@ export function createAgent({ db, bot }) {
   async function createTask(request, text, actor) {
     const sellers = (await query("SELECT id,name,login_name FROM crm_staff WHERE role='operator' AND active ORDER BY name")).rows;
     if (!sellers.length) return 'Faol sotuvchi yo‘q. Avval CRM saytida sotuvchi hisobini yarating.';
-    const parsed = await parseTask(text, sellers);
+    const parsed = await parseTask(text, sellers, keyStore?.values() || {});
     const seller = sellers.find(x => Number(x.id) === Number(parsed?.seller_id));
     const lower = text.toLocaleLowerCase('uz-UZ');
     const first = seller?.name.split(/\s+/)[0].toLocaleLowerCase('uz-UZ');

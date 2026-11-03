@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { STATUSES, CLOSED, mapLegacyStatus, pickAssignee, validateStage } from './rules.js';
 import { passwordHash, verifyPassword } from './auth.js';
 import { availableProviders, createAgent } from './agent.js';
+import { AI_PROVIDERS, createAIKeyStore } from './ai-keys.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
@@ -21,7 +22,8 @@ app.set('trust proxy',1);
 app.use(express.json({ limit: '128kb' }));
 app.use((req, res, next) => { res.set('Cache-Control','no-store'); res.set('X-Content-Type-Options','nosniff'); next(); });
 const q = (text, args=[]) => db.query(text,args);
-const agent = createAgent({db,bot});
+const keyStore = createAIKeyStore(db, process.env.AI_ENCRYPTION_KEY);
+const agent = createAgent({db,bot,keyStore});
 const str = v => String(v ?? '').trim();
 const id = v => { const n=Number(v); if (!Number.isSafeInteger(n) || n<1) throw new Error('Noto‘g‘ri ID'); return n; };
 const stamp = v => v ? new Date(v) : null;
@@ -180,8 +182,16 @@ app.patch('/crm/api/tasks/:id',auth,mutation,safe(async(req,res)=>{
 }));
 app.get('/crm/api/agent/status',auth,owner,safe(async(req,res)=>{
   const last=bot.prepare('SELECT slot,queued_at FROM agent_report_slots ORDER BY slot DESC LIMIT 1').get();
-  const providers=availableProviders();
-  res.json({ai_enabled:providers.length>0,providers,last_report:last||null,report_times:['12:00','17:00'],time_zone:'Asia/Tashkent'});
+  const providers=availableProviders(keyStore.values());
+  res.json({ai_enabled:providers.length>0,providers,configured:Object.fromEntries(AI_PROVIDERS.map(p=>[p,keyStore.names().includes(p)])),last_report:last||null,report_times:['12:00','17:00'],time_zone:'Asia/Tashkent'});
+}));
+app.put('/crm/api/agent/keys/:provider',auth,owner,mutation,safe(async(req,res)=>{
+  await keyStore.save(req.params.provider,str(req.body.key));
+  res.json({ok:true,provider:req.params.provider});
+}));
+app.delete('/crm/api/agent/keys/:provider',auth,owner,mutation,safe(async(req,res)=>{
+  await keyStore.remove(req.params.provider);
+  res.json({ok:true});
 }));
 app.post('/crm/api/agent/report',auth,owner,mutation,safe(async(req,res)=>{
   bot.prepare("INSERT INTO agent_requests(telegram_id,kind,payload,created_at) VALUES(?,'report','',?)").run(req.user.telegram_id,sqlNow());
@@ -375,6 +385,7 @@ app.get(/^\/crm(?:\/.*)?$/, (req,res)=>res.sendFile(path.join(assets,'index.html
 app.use((err,req,res,next)=>{console.error('CRM error:',err.message);res.status(err.status||400).json({error:err.message||'Xatolik yuz berdi'});});
 
 await q(fs.readFileSync(path.join(here,'schema.sql'),'utf8'));
+await keyStore.load();
 await syncBot();
 setInterval(()=>syncBot().catch(e=>console.error('Bot sync failed:',e.message)),10000).unref();
 await agent.tick().catch(e=>console.error('Agent startup failed:',e.message));
