@@ -1,0 +1,10 @@
+[Unit]
+Description=ITLIVE CRM daily PostgreSQL backup
+
+[Timer]
+OnCalendar=*-*-* 22:00:00 UTC
+Persistent=true
+Unit=itlive-crm-backup.service
+
+[Install]
+WantedBy=timers.target

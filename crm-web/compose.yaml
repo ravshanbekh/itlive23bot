@@ -1,0 +1,56 @@
+name: itlive-crm
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: itlive
+      POSTGRES_USER: itlive
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U itlive -d itlive"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  crm:
+    build: .
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://itlive:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/itlive
+      BOT_SQLITE_PATH: /bot-data/itlive.sqlite3
+      PORT: "8787"
+      TZ: Asia/Tashkent
+    volumes:
+      - /opt/itlive23bot/data:/bot-data
+    networks:
+      - private
+      - botnet
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/crm/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+networks:
+  private:
+    internal: true
+  botnet:
+    external: true
+    name: itlive23bot_default
+volumes:
+  postgres_data:

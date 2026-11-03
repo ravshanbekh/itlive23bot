@@ -1,5 +1,7 @@
 # ITLIVE qabul boti va CRM
 
+React, Node.js va PostgreSQL asosidagi CRM sayti `crm-web/` papkasida. Uning arxitekturasi, ishga tushirish va zaxiralash tartibi [CRM README](crm-web/README.md) faylida. Telegram bot shu repozitoriy ildizida mustaqil ishlashda davom etadi; Caddy `/crm/` yo‘lini CRM xizmatiga yo‘naltiradi.
+
 Manba TZ: [[02-Loyihalar/ITLIVE — Telegram qabul boti va admin paneli — TZ]]. Python 3.12+, aiogram 3, aiohttp, Jinja2, SQLite. Bir Railway servisida webhook va panel ishlaydi.
 
 ## Mahalliy ishga tushirish

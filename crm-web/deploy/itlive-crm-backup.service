@@ -1,0 +1,10 @@
+[Unit]
+Description=ITLIVE CRM PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/itlive-crm-web/deploy/backup.sh
+User=root
+Group=root

@@ -1,0 +1,17 @@
+{
+  "name": "itlive-crm-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch server/index.js",
+    "build": "npm --prefix client run build",
+    "test": "node --test server/*.test.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "cookie": "^1.0.2",
+    "express": "^5.1.0",
+    "pg": "^8.16.3"
+  }
+}

@@ -1,4 +1,16 @@
 {$PUBLIC_DOMAIN} {
     encode zstd gzip
-    reverse_proxy app:8080
+    @oldlead path_regexp oldlead ^/admin/leads/([0-9]+)$
+    handle @oldlead {
+        redir https://{host}/crm/?lead={re.oldlead.1} 302
+    }
+    handle /admin {
+        redir https://{host}/crm/ 302
+    }
+    handle /crm* {
+        reverse_proxy crm:8787
+    }
+    handle {
+        reverse_proxy app:8080
+    }
 }
