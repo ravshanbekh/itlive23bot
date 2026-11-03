@@ -62,6 +62,12 @@ export function parseDirectTask(text, sellers) {
   return { seller_id: Number(seller.id), title: body.slice(0, 180), details: body, lead_id: lead ? Number(lead[1]) : null, due_at, direct: true };
 }
 
+function interactionText(json) {
+  return (json.steps || []).filter(step => step.type === 'model_output')
+    .flatMap(step => step.content || []).filter(part => part.type === 'text')
+    .map(part => part.text || '').join('').trim();
+}
+
 export async function transcribeVoice(audio, mimeType = 'audio/ogg', keys = {}) {
   if (!Buffer.isBuffer(audio) || !audio.length || audio.length > 10_000_000) throw new Error('Ovozli xabar hajmi noto‘g‘ri');
   for (const provider of availableProviders(keys)) {
@@ -69,15 +75,15 @@ export async function transcribeVoice(audio, mimeType = 'audio/ogg', keys = {}) 
       let response, result;
       if (provider === 'gemini') {
         response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
-          method: 'POST', signal: AbortSignal.timeout(30000),
+          method: 'POST', signal: AbortSignal.timeout(45000),
           headers: { 'x-goog-api-key': keys.gemini, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: process.env.GEMINI_MODEL || 'gemini-3.8-flash', input: [
+          body: JSON.stringify({ model: process.env.GEMINI_MODEL || 'gemini-3.6-flash', store: false, generation_config: { thinking_level: 'low', max_output_tokens: 1000 }, input: [
             { type: 'text', text: 'Ushbu ovozli xabarni o‘zbek tilida aynan aytilganidek matnga ko‘chiring. Faqat transkriptni qaytaring.' },
             { type: 'audio', data: audio.toString('base64'), mime_type: mimeType }
           ] })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        result = (await response.json()).output_text;
+        result = interactionText(await response.json());
       } else {
         const form = new FormData();
         form.set('model', provider === 'groq' ? 'whisper-large-v3-turbo' : 'gpt-transcribe');
@@ -139,14 +145,14 @@ async function callAI(input, schema, instructions, maxOutput = 350, saved = {}) 
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         result = responseText(await response.json());
       } else {
-        const model = encodeURIComponent(process.env.GEMINI_MODEL || 'gemini-3.8-flash');
+        const model = encodeURIComponent(process.env.GEMINI_MODEL || 'gemini-3.6-flash');
         response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: 'POST', signal: AbortSignal.timeout(15000),
+          method: 'POST', signal: AbortSignal.timeout(30000),
           headers: { 'x-goog-api-key': keys.gemini, 'Content-Type': 'application/json' },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: instructions + (schema ? `\nFaqat quyidagi maydonli JSON obyekt qaytaring: ${JSON.stringify(schema)}` : '') }] },
             contents: [{ role: 'user', parts: [{ text: input }] }],
-            generationConfig: { maxOutputTokens: Math.max(maxOutput, 600), ...(schema ? { responseMimeType: 'application/json' } : {}) }
+            generationConfig: { maxOutputTokens: Math.max(maxOutput, 600), thinkingConfig: { thinkingLevel: 'low' }, ...(schema ? { responseMimeType: 'application/json' } : {}) }
           })
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);

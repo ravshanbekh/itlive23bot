@@ -57,7 +57,8 @@ test('OpenAI and Gemini voice transcription use configured provider', async () =
       assert.match(url,/generativelanguage.googleapis.com.*interactions/);
       const body=JSON.parse(options.body);
       assert.equal(body.input[1].mime_type,'audio/ogg');
-      return {ok:true,json:async()=>({output_text:'Bobur leadlarga telefon qilsin'})};
+      assert.equal(body.store,false);
+      return {ok:true,json:async()=>({steps:[{type:'thought',content:[{type:'text',text:'internal'}]},{type:'model_output',content:[{type:'text',text:'Bobur leadlarga telefon qilsin'}]}]})};
     };
     assert.match(await transcribeVoice(Buffer.from('ogg'),'audio/ogg',{gemini:'test-key'}),/Bobur/);
   } finally { globalThis.fetch=previous; }
